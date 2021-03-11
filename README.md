@@ -86,7 +86,18 @@ func ContextFromShutdown(shutdown <-chan struct{}) context.Context {
 
 # Redis controller
 This section documents implementation of controller with redis backend. It uses redis to store the keys and coordinate the loop calling among multiple nodes.
-Each node connecting to redis instance will trigger loops in goroutines. Apart from that one of the nodes will be elected leader which will do some extra book-keeping apart from running loops.
+Each node connecting to redis instance will trigger loops in goroutines. One of the nodes will be elected leader which will do some extra book-keeping apart from running loops.
+
+Each controller node is provided a unique ID. This can be a random UUID but having something that easily identifies the node/process should be preferred. It can be container ID if you are running this in containers or it can be IP address run in a VM.
 
 ## Leader node:
-The leader will be elected by setting a well known key in redis and resetting it again at an interval. It will heartbeat to advertise its leadership. Other nodes will keep trying to make themselves leader in case the leader goes down and stops heartbeating.
+The leader will be elected by setting a well known key in redis and resetting it again at an interval. It will heartbeat to advertise its leadership. Other nodes will keep trying to make themselves leader in case the leader goes down and stops heartbeating. It does this by using `WATCH` command. Following is sample code:
+```
+WATCH controller:leader
+GET controller:leader
+If key is empty
+MULTI
+SET controller:leader leaderid EX 5
+EXEC
+```
+Here each node tries to set a key under a `WATCH` command. It will do so only if key is empty. One of the nodes running this will be able to set and others will see `EXEC` fail since the key would've been modified.
