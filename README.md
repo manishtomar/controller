@@ -1,8 +1,59 @@
 # Background
 
-Many software systems manage resources in other systems. The biggest example is public cloud where a VM is created on an API call and it is managed by the cloud service. Typically these systems are implemented as a control loop per resource where each loop compares the current state with desired state and does actions that bring the actual state closer to desired state.
+Many software systems manage resources in other systems. The biggest example is public cloud where a VM is created on an API call and it is managed by the cloud service. Typically these systems are implemented as a control loop per resource where each loop compares the current state with desired state and does actions that bring the actual state closer to desired state. This repo provides a framework to help build such systems.
 
-Implementing these systems involves running a control loop somewhere for each resource. This repo provides a framework in go for running that control loop in a reliable, scalable manner. It provides an API to be consumed by implementer of such system and one or more implementations that call that API. Note that while this framework fits to implement a control loop that is by no means the only use of this API. It can be used anywhere which requires running a goroutine per key/string.
+# Solution
+
+Implementing these systems involves running a control loop somewhere for each resource. This repo provides a framework in go for running that control loop in a reliable, scalable manner. For a given key which would typically be some kind of identifier for the resource being managed "controller" will call a function in a separate goroutine in any one of the processes/nodes. controller guarantees that for a given key only one goroutine will be called. For example if controller is started in 2 nodes then every time `TriggerLoop(key)` is called a function is called with that key in either one of the two nodes. The framework balances number of goroutines among the nodes. The nodes can be added and removed as needed and controller will automatically scale accordingly. If a loop is shutdown in one node it is automatically started in another. controller tries very hard to ensure that loop for any given key us always run and run only once. This is the desired property of the system and will be tested as itis implemented.
+
+Note that while this framework fits to implement a control loop that is by no means the only use of this API. It can be used anywhere which requires running a goroutine per key/string.
+
+Following is sample example of its usage:
+```go
+func main() {
+  ...
+  redisConf := RedisControllerConf{
+    Host: "redis.private.company.com",
+    Port: 335,
+    MaximumLoops: 1000,
+  }
+  controller := NewRedisController(&conf)
+  controller.SetLoop(service) // set service.Loop to be called when TriggerLoop is called
+  controller.Start()  // controller will be ready to trigger loops in any worker connecting with this configuration
+  defer controller.Stop(60*time.Second) // Stop will tell each loop to shutdown
+  ...
+}
+
+// Somewhere later when loop needs to be triggered when a resource is created
+func (s *Service) CreateResource(ctx context.Context.Context, req *CreateResourceRequest) error {
+  res := createResource(req)
+  if err := s.controller.TriggerLoop(res.id); err != nil {
+    s.logger.Error("error triggering loop")
+    return err
+  }
+  return nil
+}
+
+// Loop implementation
+func (s *Service) Loop(key string, shutdown <-chan struct{}, trigger <-chan struct{}) Decision {
+  t := time.NewTicker(1*time.Second)
+  completed := make(chan struct{}, 1)
+  for {
+    select {
+    case <-shutdown:
+      return Continue
+    case <-completed:
+      return Done
+    case <-trigger:
+    case <-ticker.C:
+      done := s.resourceLoop(key)
+      if done {
+        completed <- struct{}{}
+      }
+    }
+  }
+}
+```
 
 # API
 
@@ -33,3 +84,9 @@ func ContextFromShutdown(shutdown <-chan struct{}) context.Context {
 }
 ```
 
+# Redis controller
+This section documents implementation of controller with redis backend. It uses redis to store the keys and coordinate the loop calling among multiple nodes.
+Each node connecting to redis instance will trigger loops in goroutines. Apart from that one of the nodes will be elected leader which will do some extra book-keeping apart from running loops.
+
+## Leader node:
+The leader will be elected by setting a well known key in redis and resetting it again at an interval. It will heartbeat to advertise its leadership. Other nodes will keep trying to make themselves leader in case the leader goes down and stops heartbeating.
