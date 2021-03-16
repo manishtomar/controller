@@ -101,3 +101,10 @@ SET controller:leader leaderid EX 5
 EXEC
 ```
 Here each node tries to set a key under a `WATCH` command. It will do so only if key is empty. One of the nodes running this will be able to set and others will see `EXEC` fail since the key would've been modified.
+
+### Responsibilities
+Leader will have following responsibilities:
+
+**Monitor other nodes**: Each node will heartbeat itself by setting a key with its name. The key will have expiry that is greater than heartbeat interval. If the key disappers then the node is removed from list of running nodes and its running and to be run keys will be distributed to other nodes.
+
+**Distribute the keys**: When `TriggerLoop(key)` is called the key is added to list of keys that need to be scheduled. The leader will read the key from the list and decide which node should run it with goal of balancing the load. Once decided, it will add it that node's list.
