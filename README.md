@@ -107,4 +107,11 @@ Leader will have following responsibilities:
 
 **Monitor other nodes**: Each node will heartbeat itself by setting a key with its name. The key will have expiry that is greater than heartbeat interval. If the key disappers then the node is removed from list of running nodes and its running and to be run keys will be distributed to other nodes.
 
-**Distribute the keys**: When `TriggerLoop(key)` is called the key is added to list of keys that need to be scheduled. The leader will read the key from the list and decide which node should run it with goal of balancing the load. Once decided, it will add it that node's list.
+**Distribute the keys**: When `TriggerLoop(key)` is called the key is added to list of keys that need to be scheduled. The leader will read the key from the list and decide which node should run it with goal of balancing the load among all the nodes. Once decided, it will add it that node's list.
+
+## Worker node
+Worker nodes are nodes that are running the loops. All nodes connecting to redis will be running the loops including leader node. Leader just has extra work mentioned above. It will have following responsibilities:
+
+**Heartbeating**: Each worker node will heartbeat itself by setting a key with its name and having an expiry higher than heartbeat interval. On each heartbeat interval it will just set the key value. If it dies for some reason then leader will detect the lack of key and distribute its keys to other nodes.
+
+**Running the loop**: There will be a list (queue) for each node that will contain the list of keys that is scheduled on the worker node. The node will pick up key from that list, trigger the loop in separate goroutine and add that key to a set that contains list of keys currently being run by the node. If the loop is already running on the node then empty struct is sent to `trigger` channel.
