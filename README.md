@@ -115,3 +115,34 @@ Worker nodes are nodes that are running the loops. All nodes connecting to redis
 **Heartbeating**: Each worker node will heartbeat itself by setting a key with its name and having an expiry higher than heartbeat interval. On each heartbeat interval it will just set the key value. If it dies for some reason then leader will detect the lack of key and distribute its keys to other nodes.
 
 **Running the loop**: There will be a list (queue) for each node that will contain the list of keys that is scheduled on the worker node. The node will pick up key from that list, trigger the loop in separate goroutine and add that key to a set that contains list of keys currently being run by the node. If the loop is already running on the node then empty struct is sent to `trigger` channel.
+
+## Data structures
+
+### Leader key
+```
+controller:leader
+```
+As mentioned earlier it will be used for leader election. It will contain id of the leader and will expire at a short interval (say 5s). Leader node is supposed to keep setting this key every 3s.
+
+### Set of nodes
+```
+controller:nodes
+```
+This will be a `SET` that will contain list of currently active nodes. Each node will add itself here when it bootstraps and (maybe?) shuts down. However, it is leader's job to keep checking other node's health and update this.
+
+### Node's run queue and run set
+There will be `LIST` for each node that will contain list of keys that are scheduled to run on that node.
+```
+controller:node:runqueue:<id>
+```
+There will be a `SET` for each node that will contain set of keys that are currently running on that node.
+```
+controller:node:running:<id>
+```
+Each node will monitor the `runqueue` list and when there is an entry it will read the key, trigger its loop and store it in `running` SET. If the `running` set already contains the key then it will send info in `trigger` channel of already running function.
+
+### Node heartbeat
+Each worker node except leader will set an expiring key on regular interval to prove its alive.
+```
+controller:node:heartbeat:<id>
+```
