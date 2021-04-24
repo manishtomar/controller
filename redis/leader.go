@@ -100,7 +100,7 @@ func (r *RedisController) distributeKeys(stop <-chan struct{}) {
 }
 
 func (r *RedisController) processGlobalQueue() {
-	globalQueueKey := r.keyPrefix("global")
+	globalQueueKey := r.globalQueue()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	for {
@@ -127,9 +127,7 @@ func (r *RedisController) processGlobalQueue() {
 		logger.Debug("found worker")
 
 		// add key to worker's runqueue
-		// TODO: Make finding this key a function
-		runQueueKey := r.keyPrefix("node:runqueue:" + worker)
-		added, err := r.rdb.SAdd(ctx, runQueueKey, key).Result()
+		added, err := r.rdb.SAdd(ctx, r.runQueue(worker), key).Result()
 		if err != nil {
 			logger.WithError(err).Error("error adding key to worker")
 			return
@@ -157,8 +155,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 	logger := r.logger.WithField("func", "findWorkerForKey")
 
 	// load workers
-	workersKey := r.keyPrefix("workers")
-	workers, err := r.rdb.SMembers(ctx, workersKey).Result()
+	workers, err := r.rdb.SMembers(ctx, r.workersKey()).Result()
 	if err != nil {
 		return "", nil
 	}
@@ -172,8 +169,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 		wd.Add(1)
 		go func(worker string) {
 			defer wd.Done()
-			runQueueKey := r.keyPrefix("node:runqueue:" + worker)
-			isMember, err := r.rdb.SIsMember(ctx, runQueueKey, key).Result()
+			isMember, err := r.rdb.SIsMember(ctx, r.runQueue(worker), key).Result()
 			if err != nil {
 				errChan <- err
 				return
@@ -182,8 +178,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 				result <- worker
 				return
 			}
-			runningSetKey := r.keyPrefix("node:running:" + worker)
-			isMember, err = r.rdb.SIsMember(ctx, runningSetKey, key).Result()
+			isMember, err = r.rdb.SIsMember(ctx, r.runningSet(worker), key).Result()
 			if err != nil {
 				errChan <- err
 				return
@@ -218,14 +213,12 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 		wd.Add(1)
 		go func(worker string) {
 			defer wd.Done()
-			runQueueKey := r.keyPrefix("node:runqueue:" + worker)
-			queueLength, err := r.rdb.SCard(ctx, runQueueKey).Result()
+			queueLength, err := r.rdb.SCard(ctx, r.runQueue(worker)).Result()
 			if err != nil {
 				errChan <- err
 				return
 			}
-			runningSetKey := r.keyPrefix("node:running:" + worker)
-			runningLength, err := r.rdb.SCard(ctx, runningSetKey).Result()
+			runningLength, err := r.rdb.SCard(ctx, r.runningSet(worker)).Result()
 			if err != nil {
 				errChan <- err
 				return

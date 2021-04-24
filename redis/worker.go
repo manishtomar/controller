@@ -15,8 +15,7 @@ func (r *RedisController) startWorker(shutdown <-chan struct{}) {
 	defer cancel()
 
 	// register worker in redis set
-	workersSetKey := r.keyPrefix("workers")
-	_, err := r.rdb.SAdd(ctx, workersSetKey, r.id).Result()
+	_, err := r.rdb.SAdd(ctx, r.workersKey(), r.id).Result()
 	if err != nil {
 		// cannot start processing until worker is registered. log and return as of now
 		// TODO: keep trying forever with backoff since we want the system to be resilient of network failures
@@ -89,7 +88,7 @@ func (r *RedisController) processRunQueue(ws *workersSet) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
-	runQueueKey := r.keyPrefix("node:runqueue:" + r.id)
+	runQueueKey := r.runQueue(r.id)
 	for {
 		key, err := r.rdb.SRandMember(ctx, runQueueKey).Result()
 		if err == redis.Nil {
@@ -111,8 +110,7 @@ func (r *RedisController) processRunQueue(ws *workersSet) {
 		logger.Debug("worker - triggered loop")
 
 		// the workerset accepted the key; add it to redis running set
-		runningSetKey := r.keyPrefix("node:running:" + r.id)
-		_, err = r.rdb.SAdd(ctx, runningSetKey, key).Result()
+		_, err = r.rdb.SAdd(ctx, r.runningSet(r.id), key).Result()
 		if err != nil {
 			// log and return
 			logger.WithError(err).Error("worker - error adding to running set")
