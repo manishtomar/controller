@@ -16,8 +16,6 @@ func (r *RedisController) startLeader(shutdown <-chan struct{}) {
 
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
-	start := make(chan struct{}, 1)
-	start <- struct{}{}
 	stopLeadership := make(chan struct{}, 1)
 
 	toggleLeader := func() {
@@ -38,12 +36,12 @@ func (r *RedisController) startLeader(shutdown <-chan struct{}) {
 		}
 	}
 
+	toggleLeader()
 	for {
 		select {
 		case <-shutdown:
+			r.logger.Info("shutting down leader")
 			return
-		case <-start:
-			toggleLeader()
 		case <-ticker.C:
 			toggleLeader()
 		}

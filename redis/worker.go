@@ -35,8 +35,6 @@ func (r *RedisController) heartbeatWorker(shutdown <- chan struct{}) {
 
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
-	start := make(chan struct{}, 1)
-	start <- struct{}{}
 
 	heartbeat := func() {
 		key := r.keyPrefix("workerheartbeat:" + r.id)
@@ -52,12 +50,12 @@ func (r *RedisController) heartbeatWorker(shutdown <- chan struct{}) {
 		}
 	}
 
+	heartbeat()
 	for {
 		select {
 		case <-shutdown:
+			r.logger.Info("shutting down worker heartbeat")
 			return
-		case <-start:
-			heartbeat()
 		case <-ticker.C:
 			heartbeat()
 		}
@@ -76,6 +74,7 @@ func (r *RedisController) runLoops(shutdown <- chan struct{}) {
 	for {
 		select {
 		case <-shutdown:
+			r.logger.Info("shutting down worker running loops")
 			return
 		case <-ticker.C:
 			r.processRunQueue(ws)
