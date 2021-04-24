@@ -66,7 +66,7 @@ func (r *RedisController) TriggerLoop(key string) error {
 	defer cancel()
 
 	// add key to global queue
-	_, err := r.rdb.RPush(ctx, r.globalQueue(), key).Result()
+	_, err := r.rdb.SAdd(ctx, r.globalQueue(), key).Result()
 	if err != nil {
 		return fmt.Errorf("error inserting key to global queue: %w", err)
 	}

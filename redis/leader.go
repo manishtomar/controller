@@ -104,8 +104,8 @@ func (r *RedisController) processGlobalQueue() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	for {
-		// get key from list
-		key, err := r.rdb.LIndex(ctx, globalQueueKey, 0).Result()
+		// get key from global queue
+		key, err := r.rdb.SRandMember(ctx, globalQueueKey).Result()
 		if err == redis.Nil {
 			// no more keys; return for now.
 			return
@@ -140,7 +140,7 @@ func (r *RedisController) processGlobalQueue() {
 		logger.Debug("added key to worker runqueue")
 
 		// remove key from global queue
-		_, err = r.rdb.LPop(ctx, globalQueueKey).Result()
+		_, err = r.rdb.SRem(ctx, globalQueueKey, key).Result()
 		if err != nil {
 			logger.WithError(err).Error("error removing key from globalq")
 		}
