@@ -14,6 +14,6 @@ type Worker interface {
 	// RunLoop will be called by controller to run control loop on a given key. Return "true" to stop calling this loop
 	// for the given key. Otherwise return "false" which is typically done when the worker is shutdown and loop needs to
 	// scheduled on another worker. "shutdown" channel is closed when the worker needs to shutdown. "trigger" channel is
-	// sent data when `controller.TriggerLoop` is called on the given key.
+	// sent data when `controller.TriggerLoop` is called on the same key.
 	RunLoop(key string, trigger chan struct{}, shutdown <-chan struct{}) bool
 }
