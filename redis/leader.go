@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -68,7 +69,9 @@ func (r *RedisController) tryLeader(expiry time.Duration) bool {
 	}, key)
 
 	if err != nil {
-		r.logger.WithError(err).Error("failed transaction")
+		if unwrapped := errors.Unwrap(err); unwrapped != nil && unwrapped != redis.Nil {
+			r.logger.WithError(err).Error("failed transaction")
+		}
 		return false
 	}
 
@@ -108,7 +111,7 @@ func (r *RedisController) monitorWorkers() {
 		logger.WithError(err).Error("error getting workers")
 		return
 	}
-	logger.Debugf("got workers: %v", workers)
+	logger.Debugf("got workers: %d, %v", len(workers), workers)
 
 	// find workers that are not alive anymore based on its heartbeat keys
 	deadWorkers, err := r.findDeadWorkers(ctx, workers)
@@ -116,7 +119,10 @@ func (r *RedisController) monitorWorkers() {
 		logger.WithError(err).Error("error finding dead workers")
 		return
 	}
-	logger.Infof("dead workers: %v", deadWorkers)
+	if len(deadWorkers) == 0 {
+		return
+	}
+	logger.Infof("dead workers: %d, %v", len(deadWorkers), deadWorkers)
 
 	// clean up dead workers
 	errChan := make(chan error, len(deadWorkers))
@@ -146,7 +152,7 @@ func (r *RedisController) monitorWorkers() {
 		return
 	default:
 		if len(deadWorkers) > 0 {
-			logger.Info("cleaned up dead workers")
+			logger.Infof("cleaned up dead workers: %v", len(deadWorkers))
 		}
 	}
 }
@@ -176,7 +182,7 @@ func (r *RedisController) findDeadWorkers(ctx context.Context, workers []string)
 		return nil, err
 	default:
 	}
-	deadWorkers := make([]string, len(workers))
+	deadWorkers := make([]string, 0)
 	for dw := range deadWorkersChan {
 		deadWorkers = append(deadWorkers, dw)
 	}

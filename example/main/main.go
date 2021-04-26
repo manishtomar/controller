@@ -63,7 +63,7 @@ func main() {
 
 type worker string
 
-func (w worker) RunLoop(key string, trigger chan struct{}, shutdown <-chan struct{}) bool {
+func (w worker) RunLoop(key string, trigger <-chan struct{}, shutdown <-chan struct{}) bool {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
