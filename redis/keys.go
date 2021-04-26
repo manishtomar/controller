@@ -21,3 +21,7 @@ func (r *RedisController) runningSet(worker string) string {
 func (r *RedisController) workersKey() string {
 	return r.keyPrefix("workers")
 }
+
+func (r *RedisController) heartbeatKey(worker string) string {
+	return r.keyPrefix("workerheartbeat:" + worker)
+}

@@ -22,14 +22,14 @@ func (r *RedisController) startLeader(shutdown <-chan struct{}) {
 		if r.tryLeader(keyExpiry) {
 			// we became leader. if we were already one then do nothing. if we are new, then start leadership work
 			if !r.leader {
-				r.logger.Debug("became leader")
+				r.logger.Info("became leader")
 				r.leader = true
 				go r.startLeadership(stopLeadership)
 			}
 		} else {
 			// we lost leadership. if we were already one then stop leadership work
-			if !r.leader {
-				r.logger.Debug("lost leadership")
+			if r.leader {
+				r.logger.Info("lost leadership")
 				r.leader = false
 				stopLeadership <- struct{}{}
 			}
@@ -77,11 +77,145 @@ func (r *RedisController) tryLeader(expiry time.Duration) bool {
 
 func (r *RedisController) startLeadership(stop <-chan struct{}) {
 	go r.distributeKeys(stop)
-	go r.monitorWorkers(stop)
+	go r.startMonitoringWorkers(stop)
 }
 
-func (r *RedisController) monitorWorkers(stop <-chan struct{}) {
-	// TODO
+func (r *RedisController) startMonitoringWorkers(stop <-chan struct{}) {
+	// TODO: Think more about the ticker time
+	ticker := time.NewTicker(2*time.Second)
+	defer ticker.Stop()
+
+	r.monitorWorkers()
+	for {
+		select {
+		case <-stop:
+			r.logger.Info("shutting down monitoring workers")
+			return
+		case <-ticker.C:
+			r.monitorWorkers()
+		}
+	}
+}
+
+func (r *RedisController) monitorWorkers() {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// get workers
+	logger := r.logger.WithField("func", "monitorWorkers")
+	workers, err := r.rdb.SMembers(ctx, r.workersKey()).Result()
+	if err != nil {
+		logger.WithError(err).Error("error getting workers")
+		return
+	}
+	logger.Debugf("got workers: %v", workers)
+
+	// find workers that are not alive anymore based on its heartbeat keys
+	deadWorkers, err := r.findDeadWorkers(ctx, workers)
+	if err != nil {
+		logger.WithError(err).Error("error finding dead workers")
+		return
+	}
+	logger.Infof("dead workers: %v", deadWorkers)
+
+	// clean up dead workers
+	errChan := make(chan error, len(deadWorkers))
+	var wg sync.WaitGroup
+	for _, deadWorker := range deadWorkers {
+		wg.Add(1)
+		go func(worker string) {
+			defer wg.Done()
+			// cleanup keys associated with worker
+			err := r.cleanWorkerKeys(worker)
+			if err != nil {
+				logger.WithError(err).WithField("worker", worker).Error("error moving keys")
+				errChan <- err
+			}
+			// de-register it
+			_, err = r.rdb.SRem(ctx, r.workersKey(), worker).Result()
+			if err != nil {
+				logger.WithError(err).WithField("worker", worker).Error("error de-registering worker")
+				errChan <- err
+			}
+		}(deadWorker)
+	}
+	wg.Wait()
+	select {
+	case <-errChan:
+		// can't do anything - just return for now. we should be called again
+		return
+	default:
+		if len(deadWorkers) > 0 {
+			logger.Info("cleaned up dead workers")
+		}
+	}
+}
+
+// findDeadWorkers returns workers whose heartbeat keys have expired
+func (r *RedisController) findDeadWorkers(ctx context.Context, workers []string) ([]string, error) {
+	deadWorkersChan := make(chan string, len(workers))
+	errChan := make(chan error, len(workers))
+	var wg sync.WaitGroup
+	for _, worker := range workers {
+		wg.Add(1)
+		go func(worker string) {
+			defer wg.Done()
+			_, err := r.rdb.Get(ctx, r.heartbeatKey(worker)).Result()
+			if err == redis.Nil {
+				deadWorkersChan <- worker
+			} else if err != nil {
+				errChan <- fmt.Errorf("error getting heartbeat of %s worker: %w", worker, err)
+			}
+		}(worker)
+	}
+	wg.Wait()
+	close(deadWorkersChan)
+
+	select {
+	case err := <-errChan:
+		return nil, err
+	default:
+	}
+	deadWorkers := make([]string, len(workers))
+	for dw := range deadWorkersChan {
+		deadWorkers = append(deadWorkers, dw)
+	}
+	return deadWorkers, nil
+}
+
+func (r *RedisController) cleanWorkerKeys(worker string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	globalQueue := r.globalQueue()
+
+	moveKeys := func(fromSet string) error {
+		for {
+			// get subset of keys from set
+			keys, err := r.rdb.SRandMemberN(ctx, fromSet, 10).Result()
+			if err != nil {
+				return err
+			}
+			if len(keys) == 0 {
+				// no more keys
+				break
+			}
+
+			// move them to global q
+			for _, key := range keys {
+				_, err := r.rdb.SMove(ctx, fromSet, globalQueue, key).Result()
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	err := moveKeys(r.runQueue(worker))
+	if err != nil {
+		return err
+	}
+	return moveKeys(r.runningSet(worker))
 }
 
 func (r *RedisController) distributeKeys(stop <-chan struct{}) {
@@ -155,7 +289,11 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 	// load workers
 	workers, err := r.rdb.SMembers(ctx, r.workersKey()).Result()
 	if err != nil {
-		return "", nil
+		return "", err
+	}
+	if len(workers) == 1 {
+		logger.Debugf("returning only 1 worker: %s", workers[0])
+		return workers[0], nil
 	}
 	logger.Debugf("got workers: %v", workers)
 
@@ -188,7 +326,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 		}(worker)
 	}
 	wd.Wait()
-	logger.Debug("finished waiting 1")
+	logger.Debug("finished waiting to find key in existing workers")
 
 	select {
 	case err := <-errChan:
@@ -196,6 +334,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 		return "", err
 	case worker := <-result:
 		// got worker already processing the key; return it
+		logger.Debugf("key already exist in worker: %s", worker)
 		return worker, nil
 	default:
 	}
@@ -229,7 +368,7 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 	}
 	wd.Wait()
 	close(lengths)
-	logger.Debug("finished waiting 2")
+	logger.Debug("got lengths")
 
 	select {
 	case err := <-errChan:
@@ -243,12 +382,12 @@ func (r *RedisController) findWorkerForKey(key string) (string, error) {
 	// NOTE: This is currently naive implementation of scheduling the worker. Will be nice to consider runqueue separately
 	// when deciding. Ideally runqueue should always be near to 0 for every worker. If it isn't then something is wrong
 	// and that worker should be avoided.
-	minWorkerLength := int64(0)
-	worker := ""
+	minWorker := workerLength{length: 9223372036854775807}
 	for wl := range lengths {
-		if wl.length <= minWorkerLength {
-			worker = wl.worker
+		if wl.length <= minWorker.length {
+			minWorker = wl
 		}
+		logger.Debugf("lengths loop - wl: %v, low worker: %s", wl, minWorker.worker)
 	}
-	return worker, nil
+	return minWorker.worker, nil
 }

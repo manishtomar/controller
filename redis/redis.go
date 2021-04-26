@@ -72,4 +72,3 @@ func (r *RedisController) TriggerLoop(key string) error {
 	}
 	return nil
 }
-
