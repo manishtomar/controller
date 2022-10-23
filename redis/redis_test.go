@@ -22,7 +22,7 @@ func TestController(t *testing.T) {
 		ID:         "testid",
 		Worker:     w,
 		MaxWorkers: 5,
-		Logger: logrus.NewEntry(logger),
+		Logger:     logrus.NewEntry(logger),
 	})
 	c.Start()
 	defer c.Stop(time.Second)
@@ -39,7 +39,7 @@ func TestController(t *testing.T) {
 
 type worker string
 
-func (w worker) RunLoop(key string, trigger chan struct{}, shutdown <-chan struct{}) bool {
+func (w worker) RunLoop(key string, trigger <-chan struct{}, shutdown <-chan struct{}) bool {
 	for {
 		fmt.Printf("running loop - %s\n", key)
 		time.Sleep(time.Second)
