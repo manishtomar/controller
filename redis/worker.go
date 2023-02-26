@@ -11,6 +11,7 @@ import (
 func (r *RedisController) startWorker(shutdown <-chan struct{}) {
 	loopRunner := newRunner(r)
 	loopRunner.start(shutdown)
+
 	go r.heartbeatWorker(shutdown, loopRunner)
 }
 
@@ -23,7 +24,7 @@ func (r *RedisController) registerWorker() error {
 	return err
 }
 
-func (r *RedisController) heartbeatWorker(shutdown <- chan struct{}, lr *runner) {
+func (r *RedisController) heartbeatWorker(shutdown <-chan struct{}, lr *runner) {
 
 	// heartbeat every 3s and expire key every 5s. These are temporary values and needs to be verified
 	const heartbeatInterval = 3 * time.Second
@@ -77,22 +78,22 @@ func (r *RedisController) heartbeatWorker(shutdown <- chan struct{}, lr *runner)
 
 // runner runs all the worker loops
 type runner struct {
-	r *RedisController
-	running map[string]chan struct{}
-	stopRunning chan struct{}
+	r            *RedisController
+	running      map[string]chan struct{}
+	stopRunning  chan struct{}
 	startRunning chan struct{}
-	paused bool
-	logger *logrus.Entry
+	paused       bool
+	logger       *logrus.Entry
 }
 
 func newRunner(r *RedisController) *runner {
 	return &runner{
-		r:          r,
-		running:    make(map[string]chan struct{}),
-		stopRunning:       make(chan struct{}),
+		r:            r,
+		running:      make(map[string]chan struct{}),
+		stopRunning:  make(chan struct{}),
 		startRunning: make(chan struct{}),
-		paused: false,
-		logger : r.logger.WithField("module", "runner"),
+		paused:       false,
+		logger:       r.logger.WithField("module", "runner"),
 	}
 }
 
@@ -196,7 +197,7 @@ func (r *runner) addKey(key string, logger *logrus.Entry) {
 	trigger, ok := r.running[key]
 	if ok {
 		select {
-		case trigger <- struct {}{}:
+		case trigger <- struct{}{}:
 		default:
 			logger.WithField("key", key).Warn("couldn't send on trigger channel since it is already blocked")
 		}
